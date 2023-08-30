@@ -3,15 +3,11 @@ package com.intuit.userbusinessprofile.dto;
 import com.intuit.userbusinessprofile.model.Address;
 import com.intuit.userbusinessprofile.model.TaxIdentifiers;
 import lombok.Data;
-import org.springframework.lang.Nullable;
 
 @Data
-public class BusinessProfileUpdateRequestDto {
+public class BusinessProfileValidateAndCreateRequestDto {
 
     private String userId;
-
-    @Nullable
-    private String profileId;
 
     private String companyName;
 
@@ -27,4 +23,5 @@ public class BusinessProfileUpdateRequestDto {
 
     private String website;
 
+    private Long requestTime;
 }

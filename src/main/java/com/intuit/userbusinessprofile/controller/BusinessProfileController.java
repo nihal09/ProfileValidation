@@ -1,43 +1,42 @@
 package com.intuit.userbusinessprofile.controller;
 
-import com.intuit.userbusinessprofile.dto.BusinessProfileCreateUpdateValidationRequestDto;
-import com.intuit.userbusinessprofile.dto.BusinessProfileResponseDto;
+import com.intuit.userbusinessprofile.dto.*;
 import com.intuit.userbusinessprofile.dto.enums.BusinessProfileTaskType;
 import com.intuit.userbusinessprofile.model.*;
 import com.intuit.userbusinessprofile.producer.ProfileValidationKafkaProducer;
 import com.intuit.userbusinessprofile.service.BusinessProfileService;
 import com.intuit.userbusinessprofile.service.BusinessProfileValidationService;
+import com.intuit.userbusinessprofile.service.BusinessProfileValidationStatusService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutionException;
 
 @RestController
 @RequestMapping("/api/business-profiles")
+@CrossOrigin("*")
 public class BusinessProfileController {
 
     private final BusinessProfileService businessProfileService;
 
     private final BusinessProfileValidationService businessProfileValidationService;
+
+    private final BusinessProfileValidationStatusService businessProfileValidationStatusService;
     private final ProfileValidationKafkaProducer profileValidationKafkaProducer;
 
     @Autowired
-    public BusinessProfileController(BusinessProfileService businessProfileService , BusinessProfileValidationService businessProfileValidationService, ProfileValidationKafkaProducer profileValidationKafkaProducer) {
+    public BusinessProfileController(BusinessProfileService businessProfileService, BusinessProfileValidationService businessProfileValidationService, BusinessProfileValidationStatusService businessProfileValidationStatusService, ProfileValidationKafkaProducer profileValidationKafkaProducer) {
         this.businessProfileService = businessProfileService;
         this.businessProfileValidationService = businessProfileValidationService;
+        this.businessProfileValidationStatusService = businessProfileValidationStatusService;
         this.profileValidationKafkaProducer = profileValidationKafkaProducer;
     }
 
-    @PostMapping
-    public ResponseEntity<BusinessProfileResponseDto> createBusinessProfile(@RequestBody BusinessProfile businessProfile) {
-        BusinessProfileResponseDto createdProfile = businessProfileService.createBusinessProfile(businessProfile);
-        return ResponseEntity.ok(createdProfile);
-    }
-
     @PostMapping("/test")
-    public ResponseEntity<BusinessProfileCreateUpdateValidationRequestDto> test() throws ExecutionException, InterruptedException {
+    public ResponseEntity<BusinessProfileCreateUpdateValidationRequestDto> test() {
         //User test = businessProfileValidationService.test("8787");
         BusinessProfileCreateUpdateValidationRequestDto request = new BusinessProfileCreateUpdateValidationRequestDto();
         Address address = new Address();
@@ -67,13 +66,43 @@ public class BusinessProfileController {
         return ResponseEntity.ok(request);
     }
 
-    @GetMapping("/test")
-    public ResponseEntity<BusinessProfile> test1(){
-        return ResponseEntity.ok(businessProfileService.getBusinessProfile("d1c97677-0a94-4bfb-84ae-2a3ebcbfcf7e"));
+    @PostMapping("create-business-profile")
+    public ResponseEntity<BusinessProfileCreateUpdateRequestResponseDto> validateAndCreateBusinessProfile(@RequestBody BusinessProfileValidateAndCreateRequestDto requestDto) {
+        String validationId = UUID.randomUUID().toString();
+        businessProfileValidationService.initiateValidationForBusinessProfileCreation(requestDto, validationId);
+        BusinessProfileCreateUpdateRequestResponseDto responseDto = new BusinessProfileCreateUpdateRequestResponseDto();
+        responseDto.setValidationId(validationId);
+        responseDto.setResult("Accepted");
+        return new ResponseEntity<>(responseDto, HttpStatus.ACCEPTED);
     }
 
-    @GetMapping("/test1")
-    public ResponseEntity<BusinessProfileValidation> test2(){
-        return ResponseEntity.ok(businessProfileValidationService.getBusinessProfileValidation("d1c97677-0a94-4bfb-84ae-2a3ebcbfcf7e"));
+    @PutMapping("update-business-profile")
+    public ResponseEntity<BusinessProfileCreateUpdateRequestResponseDto> validateAndUpdateBusinessProfile(@RequestBody BusinessProfileValidateAndUpdateRequestDto requestDto) {
+        String validationId = UUID.randomUUID().toString();
+        businessProfileValidationService.initiateValidationForBusinessProfileUpdation(requestDto, validationId);
+        BusinessProfileCreateUpdateRequestResponseDto responseDto = new BusinessProfileCreateUpdateRequestResponseDto();
+        responseDto.setValidationId(validationId);
+        responseDto.setResult("Accepted");
+        return new ResponseEntity<>(responseDto, HttpStatus.ACCEPTED);
+    }
+
+    @GetMapping("fetch-latest-business-profile-update-request-status/profileId/{profileId}")
+    public ResponseEntity<BusinessProfileValidationResultDto> getLatestBusinessProfileValidationByProfileId(@PathVariable String profileId) {
+        return ResponseEntity.ok(businessProfileValidationStatusService.getLatestBusinessProfileValidationByProfileId(profileId));
+    }
+
+    @GetMapping("fetch-business-profile-update-request-status/profileId/{profileId}")
+    public ResponseEntity<List<BusinessProfileValidationResultDto>> getBusinessProfileValidationsByProfileId(@RequestParam Integer limit, @PathVariable String profileId) {
+        return ResponseEntity.ok(businessProfileValidationStatusService.getBusinessProfileValidationsByProfileId(profileId, limit));
+    }
+
+    @GetMapping("fetch-business-profile-update-request-status/validationId/{validationId}")
+    public ResponseEntity<BusinessProfileValidationResultDto> getBusinessProfileValidationByValidationId(@PathVariable String validationId) {
+        return ResponseEntity.ok(businessProfileValidationStatusService.getBusinessProfileValidationStatus(validationId));
+    }
+
+    @GetMapping("get-business-profile/{profileId}")
+    public ResponseEntity<BusinessProfile> getBusinessProfileByProfileId(@PathVariable String profileId) {
+        return ResponseEntity.ok(businessProfileService.getBusinessProfile(profileId));
     }
 }

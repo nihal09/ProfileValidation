@@ -38,8 +38,7 @@ public class TransactionService {
             BusinessProfileValidation updatedBusinessProfileValidation
     ){
         TransactionWriteRequest transactionWriteRequest = new TransactionWriteRequest();
-        // TODO
-        //transactionWriteRequest.addUpdate(businessProfileHistory);
+        transactionWriteRequest.addUpdate(businessProfileHistory);
         transactionWriteRequest.addUpdate(updatedBusinessProfile);
         transactionWriteRequest.addUpdate(updatedBusinessProfileValidation);
         dynamoDBMapper.transactionWrite(transactionWriteRequest);

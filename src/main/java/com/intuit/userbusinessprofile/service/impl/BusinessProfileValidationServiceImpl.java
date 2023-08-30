@@ -1,19 +1,19 @@
 package com.intuit.userbusinessprofile.service.impl;
 
-import com.intuit.userbusinessprofile.dto.ProductValidationResultDto;
-import com.intuit.userbusinessprofile.dto.ValidationResultDto;
+import com.intuit.userbusinessprofile.dto.*;
+import com.intuit.userbusinessprofile.dto.enums.BusinessProfileTaskType;
+import com.intuit.userbusinessprofile.exceptions.EntityNotFoundException;
 import com.intuit.userbusinessprofile.model.*;
-import com.intuit.userbusinessprofile.dto.BusinessProfileCreateUpdateValidationRequestDto;
-import com.intuit.userbusinessprofile.repository.BusinessProfileRepository;
+import com.intuit.userbusinessprofile.producer.ProfileValidationKafkaProducer;
 import com.intuit.userbusinessprofile.repository.BusinessProfileValidationRepository;
-import com.intuit.userbusinessprofile.repository.UserRepository;
-import com.intuit.userbusinessprofile.service.BusinessProfileValidationService;
-import com.intuit.userbusinessprofile.service.DummyApiClient;
-import com.intuit.userbusinessprofile.service.TransactionService;
+import com.intuit.userbusinessprofile.service.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CachePut;
 import org.springframework.data.util.Pair;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import javax.ws.rs.NotFoundException;
+
+import javax.ws.rs.BadRequestException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -22,26 +22,33 @@ import java.util.stream.Collectors;
 
 @Service
 public class BusinessProfileValidationServiceImpl implements BusinessProfileValidationService {
-
     private final BusinessProfileValidationRepository businessProfileValidationRepository;
-    private final UserRepository userRepository;
+    private final UserService userService;
     private final DummyApiClient dummyApiClient;
     private final TransactionService transactionService;
-    private final BusinessProfileRepository businessProfileRepository;
+    private final BusinessProfileService businessProfileService;
+    private final ProfileValidationKafkaProducer profileValidationKafkaProducer;
 
-    public BusinessProfileValidationServiceImpl(BusinessProfileValidationRepository businessProfileValidationRepository, UserRepository userRepository, DummyApiClient dummyApiClient, TransactionService transactionService, BusinessProfileRepository businessProfileRepository) {
+    private final AsyncCacheUpdationService asyncCacheUpdationService;
+
+    @Autowired
+    public BusinessProfileValidationServiceImpl(BusinessProfileValidationRepository businessProfileValidationRepository, UserService userService, DummyApiClient dummyApiClient, TransactionService transactionService, BusinessProfileService businessProfileService, ProfileValidationKafkaProducer profileValidationKafkaProducer, AsyncCacheUpdationService asyncCacheUpdationService) {
         this.businessProfileValidationRepository = businessProfileValidationRepository;
-        this.userRepository = userRepository;
+        this.userService = userService;
         this.dummyApiClient = dummyApiClient;
         this.transactionService = transactionService;
-        this.businessProfileRepository = businessProfileRepository;
+        this.businessProfileService = businessProfileService;
+        this.profileValidationKafkaProducer = profileValidationKafkaProducer;
+        this.asyncCacheUpdationService = asyncCacheUpdationService;
     }
 
     @Override
     public void validateAndUpdateBusinessProfileIfRequired(BusinessProfileCreateUpdateValidationRequestDto request) throws ExecutionException, InterruptedException {
         try {
             String businessProfileId = request.getProfileId();
-            BusinessProfileValidation businessProfileValidation = createBusinessProfileValidationTask(request);
+            // taking pessimistic approach, validation item may have not been created
+            BusinessProfileValidation nullableBusinessProfileValidation = getBusinessProfileValidationWithoutNullCheck(request.getValidationId());
+            BusinessProfileValidation businessProfileValidation = nullableBusinessProfileValidation == null ? createBusinessProfileValidationTaskSync(request) : nullableBusinessProfileValidation;
             if (businessProfileValidation.getStatus() == Status.IN_PROGRESS) {
                 try {
                     Pair<User, Set<Product>> userAndSubscribedProducts = getUserAndListOfSubscribedProducts(request.getUserId());
@@ -51,14 +58,12 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
                     if (validationResult.getIsValid()) {
                         switch (request.getBusinessProfileTaskType()) {
                             case CREATE -> {
-                                if (businessProfileId != null)
-                                    throw new IllegalArgumentException("Business Profile already Exist with id - " + businessProfileId);
+                                if (user.getBusinessProfileId() != null)
+                                    throw new IllegalArgumentException("Business Profile already Exist with id - " + user.getBusinessProfileId());
                                 createProfileUpdateUserAndValidationTaskInTransaction(request, businessProfileValidation, user);
                             }
                             case UPDATE -> {
-                                if (businessProfileId == null)
-                                    throw new IllegalArgumentException("Business Profile Id cannot be null to update business profile");
-                                BusinessProfile businessProfile = businessProfileRepository.getBusinessProfile(businessProfileId);
+                                BusinessProfile businessProfile = businessProfileService.getBusinessProfile(businessProfileId);
                                 if (businessProfile == null)
                                     throw new IllegalArgumentException("Business Profile doesn't exist for profileId - " + businessProfileId);
 
@@ -68,10 +73,10 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
                     } else {
                         rejectBusinessProfileValidationTask(businessProfileValidation, validationResult.getRejectionReason());
                     }
-                } catch (NotFoundException | IllegalArgumentException e) {
+                } catch (EntityNotFoundException | IllegalArgumentException e) {
                     businessProfileValidation.setStatus(Status.FAILED);
                     businessProfileValidation.setRejectionReason(e.getMessage());
-                    businessProfileValidationRepository.updateBusinessProfileValidationTask(businessProfileValidation);
+                    updateBusinessProfileValidationTask(businessProfileValidation);
                 }
             }
         } catch (Exception e) {
@@ -79,33 +84,91 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         }
     }
 
-    @Override
-    public BusinessProfileValidation getBusinessProfileValidation(String validationId) {
+    public BusinessProfileValidation getBusinessProfileValidationWithoutNullCheck(String validationId) {
         return businessProfileValidationRepository.getBusinessProfileValidation(validationId);
     }
 
-    public void rejectBusinessProfileValidationTask(BusinessProfileValidation businessProfileValidation, String rejectionReason){
+
+    @Override
+    public BusinessProfileValidation updateBusinessProfileValidationTask(BusinessProfileValidation businessProfileValidation) {
+        businessProfileValidation.setUpdatedAt(Instant.now().toEpochMilli());
+        businessProfileValidationRepository.updateBusinessProfileValidationTask(businessProfileValidation);
+        return businessProfileValidation;
+    }
+
+    @Override
+    public void initiateValidationForBusinessProfileCreation(BusinessProfileValidateAndCreateRequestDto requestDto, String validationId) {
+        BusinessProfileCreateUpdateValidationRequestDto request = new BusinessProfileCreateUpdateValidationRequestDto();
+        request.setUserId(requestDto.getUserId());
+        request.setValidationId(validationId);
+        request.setProfileId(null);
+        request.setCompanyName(requestDto.getCompanyName());
+        request.setLegalName(requestDto.getLegalName());
+        request.setBusinessAddress(requestDto.getBusinessAddress());
+        request.setLegalAddress(requestDto.getLegalAddress());
+        request.setTaxIdentifiers(requestDto.getTaxIdentifiers());
+        request.setEmail(requestDto.getEmail());
+        request.setWebsite(requestDto.getWebsite());
+        request.setValidationRequestEventTime(requestDto.getRequestTime());
+        request.setBusinessProfileTaskType(BusinessProfileTaskType.CREATE);
+
+        createBusinessProfileValidationTaskAsync(request);
+        sendValidationRequestToKafka(request);
+    }
+
+    @Override
+    public void initiateValidationForBusinessProfileUpdation(BusinessProfileValidateAndUpdateRequestDto requestDto, String validationId) {
+        if (requestDto.getProfileId() == null)
+            throw new BadRequestException("ProfileId cannot be null");
+        BusinessProfileCreateUpdateValidationRequestDto request = new BusinessProfileCreateUpdateValidationRequestDto();
+        request.setUserId(requestDto.getUserId());
+        request.setValidationId(validationId);
+        request.setProfileId(requestDto.getProfileId());
+        request.setCompanyName(requestDto.getCompanyName());
+        request.setLegalName(requestDto.getLegalName());
+        request.setBusinessAddress(requestDto.getBusinessAddress());
+        request.setLegalAddress(requestDto.getLegalAddress());
+        request.setTaxIdentifiers(requestDto.getTaxIdentifiers());
+        request.setEmail(requestDto.getEmail());
+        request.setWebsite(requestDto.getWebsite());
+        request.setValidationRequestEventTime(requestDto.getRequestTime());
+        request.setBusinessProfileTaskType(BusinessProfileTaskType.UPDATE);
+
+        createBusinessProfileValidationTaskAsync(request);
+        sendValidationRequestToKafka(request);
+    }
+
+    @Async
+    protected void sendValidationRequestToKafka(BusinessProfileCreateUpdateValidationRequestDto request) {
+        profileValidationKafkaProducer.sendMessage(request);
+    }
+
+    private void rejectBusinessProfileValidationTask(BusinessProfileValidation businessProfileValidation, String rejectionReason) {
         businessProfileValidation.setStatus(Status.REJECTED);
         businessProfileValidation.setRejectionReason(rejectionReason);
-        businessProfileValidationRepository.updateBusinessProfileValidationTask(businessProfileValidation);
+        updateBusinessProfileValidationTask(businessProfileValidation);
+        String profileId = businessProfileValidation.getProfileId();
+        if (profileId != null)
+            asyncCacheUpdationService.updateLatestValidationByProfileIdCache(profileId);
     }
-    public void updateProfileAndTaskCreateProfileHistoryIfRequired(
+
+    private void updateProfileAndTaskCreateProfileHistoryIfRequired(
             BusinessProfile businessProfile,
             BusinessProfileCreateUpdateValidationRequestDto request,
             BusinessProfileValidation businessProfileValidation
     ) {
         if (businessProfile.getLatestApprovedValidationEventTime() < request.getValidationRequestEventTime()) {
             updateProfileAndTaskCreateProfileHistoryInTransaction(businessProfile, request, businessProfileValidation);
-            updateBusinessProfileCache(businessProfile.getProfileId());
-            updateBusinessProfileValidationCache(businessProfileValidation.getValidationId());
+            asyncCacheUpdationService.updateBusinessProfileCache(businessProfile.getProfileId());
         } else {
             businessProfileValidation.setStatus(Status.TERMINATED);
             businessProfileValidation.setTerminationReason(TerminationReason.PROFILE_ALREADY_UPDATED_WITH_NEW_REQUEST);
-            businessProfileValidationRepository.updateBusinessProfileValidationTask(businessProfileValidation);
+            updateBusinessProfileValidationTask(businessProfileValidation);
         }
+        asyncCacheUpdationService.updateLatestValidationByProfileIdCache(businessProfile.getProfileId());
     }
 
-    public void updateProfileAndTaskCreateProfileHistoryInTransaction(
+    private void updateProfileAndTaskCreateProfileHistoryInTransaction(
             BusinessProfile businessProfile,
             BusinessProfileCreateUpdateValidationRequestDto request,
             BusinessProfileValidation businessProfileValidation
@@ -141,7 +204,7 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
 
     }
 
-    public void createProfileUpdateUserAndValidationTaskInTransaction(
+    private void createProfileUpdateUserAndValidationTaskInTransaction(
             BusinessProfileCreateUpdateValidationRequestDto request,
             BusinessProfileValidation businessProfileValidation,
             User user
@@ -167,33 +230,19 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         user.setUpdatedAt(currentTimeInEpocMs);
 
         businessProfileValidation.setStatus(Status.ACCEPTED);
+        businessProfileValidation.setProfileId(businessProfileId);
         businessProfileValidation.setUpdatedAt(currentTimeInEpocMs);
 
         transactionService.createProfileUpdateUserAndValidationTaskInTransaction(user, businessProfile, businessProfileValidation);
-        updateUserCache(user.getUserId());
-        updateBusinessProfileCache(businessProfileId);
-        updateBusinessProfileValidationCache(businessProfileValidation.getValidationId());
-    }
-
-    @Async
-    public void updateUserCache(String userId) {
-        userRepository.getUserAndUpdateCache(userId);
-    }
-
-    @Async
-    public void updateBusinessProfileCache(String profileId) {
-        businessProfileRepository.getBusinessProfileAndUpdateCache(profileId);
-    }
-
-    @Async
-    public void updateBusinessProfileValidationCache(String validationId) {
-        businessProfileValidationRepository.getBusinessProfileValidationAndUpdateCache(validationId);
+        asyncCacheUpdationService.updateUserCache(user.getUserId());
+        asyncCacheUpdationService.updateBusinessProfileCache(businessProfileId);
+        asyncCacheUpdationService.updateBusinessProfileValidationCache(businessProfileValidation.getValidationId());
     }
 
     @Override
     public User test(String key) {
         User test = new User();
-        Set<Product> products= new HashSet<>();
+        Set<Product> products = new HashSet<>();
         products.add(Product.QB);
         test.setUserId(UUID.randomUUID().toString());
         test.setFirstName("jh");
@@ -206,10 +255,10 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         /*User user = userRepository.getUser("96aa0a5c-5257-417c-b2f8-d8d60c92d56d");
         user.setBusinessProfileId("test");
         userRepository.test(user);*/
-        return userRepository.createUser(test);
+        return userService.createUser(test);
     }
 
-    public ValidationResultDto validateBusinessProfileForSubscribedProducts(BusinessProfileCreateUpdateValidationRequestDto request, Set<Product> subscribedProducts) throws ExecutionException, InterruptedException {
+    private ValidationResultDto validateBusinessProfileForSubscribedProducts(BusinessProfileCreateUpdateValidationRequestDto request, Set<Product> subscribedProducts) throws ExecutionException, InterruptedException {
         List<CompletableFuture<ProductValidationResultDto>> futures = subscribedProducts.stream()
                 .map(product -> validateProfileForAProductAsync(request, product))
                 .toList();
@@ -235,22 +284,39 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
     }
 
     @Async
-    public CompletableFuture<ProductValidationResultDto> validateProfileForAProductAsync(BusinessProfileCreateUpdateValidationRequestDto request, Product product) {
+    protected CompletableFuture<ProductValidationResultDto> validateProfileForAProductAsync(BusinessProfileCreateUpdateValidationRequestDto request, Product product) {
         ProductValidationResultDto validationResult = dummyApiClient.validateProfileForAProduct(request, product);
         return CompletableFuture.completedFuture(validationResult);
     }
 
-    public Pair<User, Set<Product>> getUserAndListOfSubscribedProducts(String userId) {
-        User user = userRepository.getUser(userId);
+    private Pair<User, Set<Product>> getUserAndListOfSubscribedProducts(String userId) {
+        User user = userService.getUser(userId);
         if (user == null)
-            throw new NotFoundException("User with Id -" + userId + " not found");
+            throw new EntityNotFoundException("User with Id -" + userId + " not found");
         Set<Product> subscribedProducts = user.getSubscribedProducts();
         if (subscribedProducts.isEmpty())
             throw new IllegalArgumentException("User is not subscribed to any product");
         else return Pair.of(user, user.getSubscribedProducts());
     }
 
-    public BusinessProfileValidation createBusinessProfileValidationTask(BusinessProfileCreateUpdateValidationRequestDto request) {
+    @Async
+    protected void createBusinessProfileValidationTaskAsync(BusinessProfileCreateUpdateValidationRequestDto request) {
+        BusinessProfileValidation businessProfileValidation = createBusinessProfileValidationObject(request);
+        businessProfileValidationRepository.createBusinessProfileValidationTask(businessProfileValidation);
+        if (request.getProfileId() != null)
+            asyncCacheUpdationService.updateLatestValidationByProfileIdCache(request.getProfileId());
+    }
+
+    @CachePut(key = "#request.validationId", value = "BusinessProfileValidation")
+    public BusinessProfileValidation createBusinessProfileValidationTaskSync(BusinessProfileCreateUpdateValidationRequestDto request) {
+        BusinessProfileValidation businessProfileValidation = createBusinessProfileValidationObject(request);
+        BusinessProfileValidation createdBusinessProfileValidation = businessProfileValidationRepository.createBusinessProfileValidationTask(businessProfileValidation);
+        if (request.getProfileId() != null)
+            asyncCacheUpdationService.updateLatestValidationByProfileIdCache(request.getProfileId());
+        return createdBusinessProfileValidation;
+    }
+
+    private BusinessProfileValidation createBusinessProfileValidationObject(BusinessProfileCreateUpdateValidationRequestDto request) {
         BusinessProfileValidation businessProfileValidation = new BusinessProfileValidation();
         Long currentTimeInEpochMs = Instant.now().toEpochMilli();
         businessProfileValidation.setValidationId(request.getValidationId());
@@ -269,8 +335,7 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         businessProfileValidation.setWebsite(request.getWebsite());
         businessProfileValidation.setCreatedAt(currentTimeInEpochMs);
         businessProfileValidation.setUpdatedAt(currentTimeInEpochMs);
-        return businessProfileValidationRepository.createBusinessProfileValidationTask(businessProfileValidation);
-
+        return businessProfileValidation;
     }
 
 }

@@ -2,13 +2,10 @@ package com.intuit.userbusinessprofile.repository;
 
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
-import com.intuit.userbusinessprofile.model.BusinessProfile;
 import com.intuit.userbusinessprofile.model.BusinessProfileHistory;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Repository;
-
-import java.time.Instant;
 import java.util.List;
+
 
 @Repository
 public class BusinessProfileHistoryRepository {

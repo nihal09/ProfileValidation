@@ -1,11 +1,13 @@
 package com.intuit.userbusinessprofile.dto;
 
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBDocument;
 import com.intuit.userbusinessprofile.dto.enums.BusinessProfileTaskType;
 import com.intuit.userbusinessprofile.model.Address;
 import com.intuit.userbusinessprofile.model.TaxIdentifiers;
 import lombok.Data;
 
 @Data
+@DynamoDBDocument
 public class BusinessProfileCreateUpdateValidationRequestDto {
 
     private String userId;
