@@ -8,6 +8,8 @@ import com.intuit.userbusinessprofile.model.*;
 import com.intuit.userbusinessprofile.producer.ProfileValidationKafkaProducer;
 import com.intuit.userbusinessprofile.repository.BusinessProfileValidationRepository;
 import com.intuit.userbusinessprofile.service.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
 import org.springframework.scheduling.annotation.Async;
@@ -20,6 +22,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class BusinessProfileValidationServiceImpl implements BusinessProfileValidationService {
+
+    private static final Logger logger = LoggerFactory.getLogger(BusinessProfileValidationServiceImpl.class);
     private final BusinessProfileValidationRepository businessProfileValidationRepository;
     private final UserService userService;
     private final DummyApiClient dummyApiClient;
@@ -47,6 +51,7 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
             // taking pessimistic approach, validation item may have not been created
             BusinessProfileValidation nullableBusinessProfileValidation = getBusinessProfileValidationWithoutNullCheck(request.getValidationId());
             BusinessProfileValidation businessProfileValidation = nullableBusinessProfileValidation == null ? createBusinessProfileValidationTaskSync(request) : nullableBusinessProfileValidation;
+            logger.info("Processing Validation Task Id - "+businessProfileValidation.getValidationId());
             if (businessProfileValidation.getStatus() == Status.IN_PROGRESS) {
                 try {
                     Pair<User, Set<Product>> userAndSubscribedProducts = getUserAndListOfSubscribedProducts(request.getUserId());
@@ -199,7 +204,12 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         businessProfileValidation.setUpdatedAt(currentTime);
         businessProfileValidation.setStatus(Status.ACCEPTED);
 
+        logger.info("Updating Business Profile with id - "+businessProfile.getProfileId());
+        logger.info("Updating Validation task with id - "+businessProfileValidation.getValidationId());
         transactionService.updateProfileAndTaskCreateProfileHistoryInTransaction(businessProfileHistory, businessProfile, businessProfileValidation);
+        logger.info("Updated Business Profile with id - "+businessProfile.getProfileId());
+        logger.info("Updated Validation task with id- "+businessProfileValidation.getValidationId());
+        logger.info("Created Profile History with id- "+businessProfileHistory.getId());
 
     }
 
@@ -232,10 +242,18 @@ public class BusinessProfileValidationServiceImpl implements BusinessProfileVali
         businessProfileValidation.setProfileId(businessProfileId);
         businessProfileValidation.setUpdatedAt(currentTimeInEpocMs);
 
+        logger.info("Creating Business Profile with id - "+businessProfileId);
+        logger.info("Updating User id = "+ user.getUserId()+" with Business Profile id - "+businessProfileId);
+        logger.info("Updating Validation task with id - "+businessProfileValidation.getValidationId());
+
         transactionService.createProfileUpdateUserAndValidationTaskInTransaction(user, businessProfile, businessProfileValidation);
         asyncCacheUpdationService.updateUserCache(user.getUserId());
         asyncCacheUpdationService.updateBusinessProfileCache(businessProfileId);
         asyncCacheUpdationService.updateBusinessProfileValidationCache(businessProfileValidation.getValidationId());
+
+        logger.info("Created Business Profile with id - "+businessProfileId);
+        logger.info("Updated User id = "+ user.getUserId()+" with Business Profile id - "+businessProfileId);
+        logger.info("Updated Validation task with id - "+businessProfileValidation.getValidationId());
     }
 
     @Override
