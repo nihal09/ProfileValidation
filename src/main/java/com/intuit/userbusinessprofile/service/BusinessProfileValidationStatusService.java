@@ -41,9 +41,9 @@ public class BusinessProfileValidationStatusService {
 
     @CachePut(value = "LatestValidationResultProfileId",key = "#profileId")
     public BusinessProfileValidationResultDto getLatestBusinessProfileValidationByProfileIdUpdateCache(String profileId) {
-        System.out.println("latest------------------\n-------------------");
         return getLatestBusinessProfileValidationByProfileIdFromDb(profileId);
     }
+
     public BusinessProfileValidationResultDto getLatestBusinessProfileValidationByProfileIdFromDb(String profileId) {
         List<BusinessProfileValidation> businessProfileValidations = businessProfileValidationRepository.getBusinessProfileValidationsByProfileId(profileId, 1);
         if(businessProfileValidations.isEmpty()){
@@ -64,6 +64,7 @@ public class BusinessProfileValidationStatusService {
     public BusinessProfileValidationResultDto getBusinessProfileValidationStatus(String validationId) {
         return modelMapper.map(getBusinessProfileValidationFromDb(validationId),BusinessProfileValidationResultDto.class);
     }
+
     public BusinessProfileValidation getBusinessProfileValidationFromDb(String validationId){
         BusinessProfileValidation businessProfileValidation = businessProfileValidationRepository.getBusinessProfileValidation(validationId);
         if(businessProfileValidation == null){

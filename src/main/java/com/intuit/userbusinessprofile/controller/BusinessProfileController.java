@@ -1,9 +1,7 @@
 package com.intuit.userbusinessprofile.controller;
 
 import com.intuit.userbusinessprofile.dto.*;
-import com.intuit.userbusinessprofile.dto.enums.BusinessProfileTaskType;
 import com.intuit.userbusinessprofile.model.*;
-import com.intuit.userbusinessprofile.producer.ProfileValidationKafkaProducer;
 import com.intuit.userbusinessprofile.service.BusinessProfileService;
 import com.intuit.userbusinessprofile.service.BusinessProfileValidationService;
 import com.intuit.userbusinessprofile.service.BusinessProfileValidationStatusService;
@@ -25,17 +23,15 @@ public class BusinessProfileController {
     private final BusinessProfileValidationService businessProfileValidationService;
 
     private final BusinessProfileValidationStatusService businessProfileValidationStatusService;
-    private final ProfileValidationKafkaProducer profileValidationKafkaProducer;
 
     @Autowired
-    public BusinessProfileController(BusinessProfileService businessProfileService, BusinessProfileValidationService businessProfileValidationService, BusinessProfileValidationStatusService businessProfileValidationStatusService, ProfileValidationKafkaProducer profileValidationKafkaProducer) {
+    public BusinessProfileController(BusinessProfileService businessProfileService, BusinessProfileValidationService businessProfileValidationService, BusinessProfileValidationStatusService businessProfileValidationStatusService) {
         this.businessProfileService = businessProfileService;
         this.businessProfileValidationService = businessProfileValidationService;
         this.businessProfileValidationStatusService = businessProfileValidationStatusService;
-        this.profileValidationKafkaProducer = profileValidationKafkaProducer;
     }
 
-    @PostMapping("/test")
+    /*@PostMapping("/test")
     public ResponseEntity<BusinessProfileCreateUpdateValidationRequestDto> test() {
         //User test = businessProfileValidationService.test("8787");
         BusinessProfileCreateUpdateValidationRequestDto request = new BusinessProfileCreateUpdateValidationRequestDto();
@@ -64,7 +60,7 @@ public class BusinessProfileController {
         //businessProfileValidationService.validateAndUpdateBusinessProfileIfRequired(request);
         profileValidationKafkaProducer.sendMessage(request);
         return ResponseEntity.ok(request);
-    }
+    }*/
 
     @PostMapping("create-business-profile")
     public ResponseEntity<BusinessProfileCreateUpdateRequestResponseDto> validateAndCreateBusinessProfile(@RequestBody BusinessProfileValidateAndCreateRequestDto requestDto) {

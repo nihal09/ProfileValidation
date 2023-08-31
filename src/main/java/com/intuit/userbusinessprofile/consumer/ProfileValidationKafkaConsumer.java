@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+import java.util.concurrent.ExecutionException;
 
 @Component
 public class ProfileValidationKafkaConsumer {
@@ -22,12 +23,12 @@ public class ProfileValidationKafkaConsumer {
     }
 
     @KafkaListener(groupId = ApplicationConstant.GROUP_ID_JSON, topics = ApplicationConstant.TOPIC_NAME, containerFactory = ApplicationConstant.KAFKA_LISTENER_CONTAINER_FACTORY)
-    public void receivedMessage(BusinessProfileCreateUpdateValidationRequestDto message) {
+    public void receivedMessage(BusinessProfileCreateUpdateValidationRequestDto message) throws ExecutionException, InterruptedException {
         try {
             businessProfileValidationService.validateAndUpdateBusinessProfileIfRequired(message);
         } catch (Exception e){
-
             logger.info("Json message received using Kafka listener error");
+            throw e;
         }
         logger.info("Json message received using Kafka listener " + message);
     }
