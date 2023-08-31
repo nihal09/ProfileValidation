@@ -84,7 +84,7 @@ public class RestResponseEntityExceptionHandler extends ResponseEntityExceptionH
         return convertExceptionToGlobalExceptionDto(status,ex);
     }
 
-    private ResponseEntity<Object> convertExceptionToGlobalExceptionDto(HttpStatusCode status, Exception ex){
+    ResponseEntity<Object> convertExceptionToGlobalExceptionDto(HttpStatusCode status, Exception ex){
         GlobalExceptionDto registrationResponseDto = new GlobalExceptionDto();
         registrationResponseDto.setResultCode(status.value());
         registrationResponseDto.setReason(ex.getMessage());

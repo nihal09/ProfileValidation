@@ -8,6 +8,8 @@ import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -26,6 +28,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public User createUser(User user) {
+        user.setCreatedAt(Instant.now().toEpochMilli());
+        user.setUpdatedAt(Instant.now().toEpochMilli());
         return userRepository.createUser(user);
     }
 

@@ -7,10 +7,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.cache.annotation.EnableCaching;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
+@EnableCaching
 class BusinessProfileImplTest {
     @Mock
     private BusinessProfileRepository businessProfileRepository;
@@ -27,6 +29,7 @@ class BusinessProfileImplTest {
     public void testGetBusinessProfile_Cacheable() {
         String profileId = "123";
         BusinessProfile businessProfile = new BusinessProfile();
+        businessProfile.setProfileId("123");
         when(businessProfileRepository.getBusinessProfile(profileId))
                 .thenReturn(businessProfile);
 

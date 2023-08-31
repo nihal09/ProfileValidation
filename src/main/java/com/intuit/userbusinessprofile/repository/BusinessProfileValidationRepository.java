@@ -5,6 +5,7 @@ import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBSaveExpression;
 import com.amazonaws.services.dynamodbv2.model.*;
 import com.intuit.userbusinessprofile.model.BusinessProfileValidation;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Repository;
@@ -42,6 +43,11 @@ public class BusinessProfileValidationRepository {
     @Cacheable(value = "BusinessProfileValidation",key = "#validationId",unless = "#result eq null or #result.profileId ne null")
     public BusinessProfileValidation getBusinessProfileValidation(String validationId){
         return dynamoDBMapper.load(BusinessProfileValidation.class, validationId);
+    }
+
+    @CacheEvict(value = "BusinessProfileValidation",key = "#validationId")
+    public void deleteBusinessProfileValidation(BusinessProfileValidation businessProfileValidation){
+        dynamoDBMapper.delete(businessProfileValidation);
     }
 
     public List<BusinessProfileValidation> getBusinessProfileValidationsByProfileId(
